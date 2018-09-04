@@ -1,3 +1,0 @@
-/code/sshx/CMakeFiles/rebuild_cache.dir
-/code/sshx/CMakeFiles/sshx.dir
-/code/sshx/CMakeFiles/edit_cache.dir
