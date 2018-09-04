@@ -1,0 +1,26 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/code/sshx/src/sshx.c
+stdio.h
+-
+getopt.h
+-
+stdlib.h
+-
+string.h
+-
+zconf.h
+-
+sys/wait.h
+-
+fcntl.h
+-
+sys/ioctl.h
+-
+
