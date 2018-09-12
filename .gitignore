@@ -64,6 +64,6 @@ cmake_install.cmake
 CMakeCache.txt
 Makefile
 
-#sshx
+# sshx
 sshx
 sshx.cbp

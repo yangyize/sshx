@@ -13,13 +13,13 @@ char *opt_str(char *optarg, char *argv_optind);
 
 void child(char *user, char *address, long port, char *name, char *password);
 
-void parent(int childpid);
-
 char *makestr(char *buf);
 
 void sigchild_handler(int signum);
 
 void winch_handler(int signum);
+git
+int handleoutput(int fd);
 
 struct option long_options[] = {
         {"address",  required_argument, NULL, 'a'},
@@ -32,9 +32,10 @@ struct option long_options[] = {
         {0, 0, 0,                             0}
 };
 
-static int pt_fd;
+static int master_pt_fd;
 static int tty_fd;
-static char *pts_name;
+static char *pt_name;
+char password[1024] = {'\0'};
 
 int main(int argc, char *argv[]) {
     int newpid;
@@ -43,7 +44,6 @@ int main(int argc, char *argv[]) {
 
     char user[1024] = "root";
     char address[1024] = {'\0'};
-    char password[1024] = {'\0'};
     char name[1024] = {'\0'};
     long port = 22;
     char *port_p;
@@ -90,50 +90,91 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        printf("optind: %d\n", optind);
+
         signal(SIGCHLD, sigchild_handler);
 
-        pt_fd = open("/dev/ptmx", O_RDWR); // like posix_openpt
-        if (pt_fd == -1) {
-            perror("could not get a terminal");
+        master_pt_fd = open("/dev/ptmx", O_RDWR); // like posix_openpt
+        if (master_pt_fd == -1) {
+            perror("Could not get a terminal");
             exit(2);
         }
 
-        fcntl(pt_fd, F_SETFL, O_NONBLOCK);
+        fcntl(master_pt_fd, F_SETFL, O_NONBLOCK);
 
         tty_fd = open("/dev/tty", O_RDWR);
         if (tty_fd == -1) {
-            perror("could not open tty");
+            perror("Could not open tty");
             exit(2);
         }
 
         if (ioctl(tty_fd, TIOCGWINSZ, &wbuf) != -1) {
             signal(SIGWINCH, winch_handler);
-            ioctl(pt_fd, TIOCGWINSZ, &wbuf);
+            ioctl(master_pt_fd, TIOCGWINSZ, &wbuf);
         }
 
-        pts_name = ptsname(pt_fd);
+        pt_name = ttyname(master_pt_fd);
 
         if ((newpid = fork()) == -1) {
             perror("fork");
         } else if (newpid == 0) {
             child(user, address, port, name, password);
-        } else {
-            parent(newpid);
+        } else if (newpid < 0) {
+            perror("fail ");
         }
 
+        int slave_pt_fd = open(pt_name, O_RDWR | O_NOCTTY);
+
+        int status = 0;
+        int terminate = 0;
+        pid_t wait_id;
+        sigset_t sigmask, sigmask_select;
+
+        sigemptyset(&sigmask_select);
+
+        sigemptyset(&sigmask);
+        sigaddset(&sigmask, SIGCHLD);
+
+        sigprocmask(SIG_SETMASK, &sigmask, NULL);
+
+        do {
+            if (!terminate) {
+                fd_set readfd;
+                FD_ZERO(&readfd);
+                FD_SET(master_pt_fd, &readfd);
+
+                printf("try to pselect\n");
+                int selret = pselect(master_pt_fd + 1, &readfd, NULL, NULL, NULL, &sigmask_select);
+                printf("pselect %d\n", selret);
+                if (selret > 0) {
+                    if (FD_ISSET(master_pt_fd, &readfd)) {
+                        int ret;
+                        if ((ret = handleoutput(master_pt_fd))) {
+                            if (ret > 0) {
+                                close(master_pt_fd);
+                                close(slave_pt_fd);
+                            }
+
+                            terminate = ret;
+
+                            if (terminate) {
+                                close(slave_pt_fd);
+                            }
+                        }
+                    }
+                }
+                wait_id = waitpid(newpid, &status, WNOHANG);
+            } else {
+                wait_id = waitpid(newpid, &status, 0);
+            }
+        } while (wait_id == 0 || (!WIFEXITED(status) && !WIFSIGNALED(status)));
     }
     return 0;
 }
 
-void parent(int childpid) {
-    int wait_rv;
-    int child_status;
-
-    wait_rv = wait(&child_status);
-    printf("wait returned %d\n", wait_rv);
-}
 
 void child(char *user, char *address, long port, char *name, char *password) {
+//    setsid();
     int sla_fd;
     char *arglist[1024];
     int numargs = 0;
@@ -141,10 +182,9 @@ void child(char *user, char *address, long port, char *name, char *password) {
     char *temp2 = malloc(2049);
     char *ssh = "ssh";
 
-//    setsid();
-    sla_fd = open(pts_name, O_RDWR);
+    sla_fd = open(pt_name, O_RDWR);
     close(sla_fd);
-    close(pt_fd);
+    close(master_pt_fd);
     arglist[numargs++] = ssh;
 
     strcpy(temp1, user);
@@ -154,7 +194,9 @@ void child(char *user, char *address, long port, char *name, char *password) {
 
     memset(temp1, 0, 2049);
 
+    memset(temp1, 0, 2049);
     sprintf(temp2, "%li", port);
+    strcat(temp1, "-p");
     strcat(temp1, temp2);
     arglist[numargs++] = makestr(temp1);
 
@@ -163,6 +205,7 @@ void child(char *user, char *address, long port, char *name, char *password) {
     }
 
     execvp(arglist[0], arglist);
+
     perror("execvp fail");
     exit(1);
 }
@@ -207,6 +250,27 @@ void usage(int status) {
     }
 }
 
+int handleoutput(int fd) {
+    static int prevmatch = 0;
+
+    char buffer[256];
+    int ret = 0;
+
+    int numread = (int) read(fd, buffer, sizeof(buffer) - 1);
+    buffer[numread] = '\0';
+
+    if (!prevmatch) {
+        write(fd, password, strlen(password));
+        write(fd, "\n", 1);
+        prevmatch = 1;
+    } else {
+        fprintf(stderr, "wrong password");
+        ret = -1;
+    }
+
+    return ret;
+}
+
 void sigchild_handler(int signum) {
 
 }
@@ -214,6 +278,6 @@ void sigchild_handler(int signum) {
 void winch_handler(int signum) {
     struct winsize wsize;
     if (ioctl(tty_fd, TIOCGWINSZ, &wsize) == 0) {
-        ioctl(pt_fd, TIOCGWINSZ, &wsize);
+        ioctl(master_pt_fd, TIOCGWINSZ, &wsize);
     }
 }
