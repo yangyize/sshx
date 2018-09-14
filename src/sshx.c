@@ -50,6 +50,8 @@ void fcopy(FILE *fdst, long d, FILE *fsrc, long s, long offset);
 
 char *fname(FILE *file);
 
+int fupdate(FILE *file, long offset, void *buffer, int newlen, int oldlen);
+
 struct option long_options[] = {
         {"address",  required_argument, NULL, 'a'},
         {"help",     no_argument,       NULL, 'h'},
@@ -214,9 +216,7 @@ int main(int argc, char *argv[]) {
                                 close(master_pt_fd);
                                 close(slave_pt_fd);
                             }
-
                             terminate = ret;
-
                             if (terminate) {
                                 close(slave_pt_fd);
                             }
@@ -385,20 +385,27 @@ void store_access() {
     char *r_password = NULL;
 
     while (!feof(file)) {
-        fscanf(file, "%s\t%s\t%s\t%d\t%s\n",
-               r_name,
-               r_user,
-               r_host,
-               &r_port,
-               r_password
-        );
+        int scaf = fscanf(file, "%s\t%s\t%s\t%d\t%s\n",
+                          r_name,
+                          r_user,
+                          r_host,
+                          &r_port,
+                          r_password);
+        if (scaf < 0) {
+            return;
+        }
+        int bufsize = sizeof(r_name) + sizeof(r_user) + sizeof(r_host) + sizeof(r_password) + 9;
         if (user_obj.host == r_host && user_obj.port == r_port) {
-            if (user_obj.name != r_name) {
-
+            long offset;
+            if (user_obj.name && user_obj.name != r_name) {
+                offset = ftell(file);
+                fupdate(file, offset - bufsize, user_obj.name, sizeof(user_obj.name), sizeof(r_name));
             }
 
-            if (user_obj.password != r_password) {
-
+            if (user_obj.password && user_obj.password != r_password) {
+                offset = ftell(file);
+                fupdate(file, offset - bufsize + sizeof(r_password), user_obj.password, sizeof(user_obj.password),
+                        sizeof(r_password));
             }
             fclose(file);
             return;
@@ -413,7 +420,6 @@ void store_access() {
             user_obj.password);
     fclose(file);
 }
-
 
 int handleoutput(int fd) {
     static int prevmatch = 0;
@@ -434,6 +440,59 @@ int handleoutput(int fd) {
     }
 
     return ret;
+}
+
+int fupdate(FILE *file, long offset, void *buffer, int newlen, int oldlen) {
+    long file_size = fsize(file);
+    char *file_name;
+    FILE *temp;
+    if (offset > file_size || offset < 0 || newlen < 0 || oldlen < 0) {
+        return -1;
+    }
+    if (offset == file_size) {
+        fseek(file, offset, SEEK_SET);
+        if (!fwrite(buffer, newlen, 1, file)) {
+            return -1;
+        }
+    }
+    if (offset < file_size) {
+        temp = tmpfile();
+        fcopy(temp, 0, file, 0, offset);
+        fwrite(buffer, newlen, 1, temp);
+        fcopy(temp, offset + newlen, file, offset + oldlen, -1);
+        file_name = fname(file);
+        freopen(file_name, "wb+", file);
+        fcopy(file, 0, temp, 0, -1);
+        fclose(temp);
+    }
+    return 0;
+}
+
+int finsert(FILE *file, long offset, void *buffer, int len) {
+    long file_size = fsize(file);
+    char *file_name;
+    FILE *temp;
+    if (offset > file_size || offset < 0 || len < 0) {
+        return -1;
+    }
+    if (offset == file_size) {
+        fseek(file, offset, SEEK_SET);
+        if (!fwrite(buffer, len, 1, file)) {
+            return -1;
+        }
+    }
+    if (offset < file_size) {
+        temp = tmpfile();
+        fcopy(temp, 0, file, 0, offset);
+        fwrite(buffer, len, 1, temp);
+        fcopy(temp, offset + len, file, offset, -1);
+        file_name = fname(file);
+        freopen(file_name, "wb+", file);
+        fcopy(file, 0, temp, 0, -1);
+        fclose(temp);
+
+    }
+    return 0;
 }
 
 int fdel(FILE *file, long offset, int len) {
