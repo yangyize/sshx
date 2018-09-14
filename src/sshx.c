@@ -7,11 +7,13 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
+#define FILE_PATH "/code/ssh.txt"
+
 enum use_code {
     LIST_REC,
     USE_ID,
-    STORE_ACCESS,
-    IGNORE_ACCESS,
+    ACCESS_SAVE,
+    IGNORE_SAVE,
 };
 
 struct {
@@ -42,7 +44,7 @@ void read_index();
 
 void list_rec();
 
-void store_access();
+void save_access();
 
 long fsize(FILE *file);
 
@@ -51,6 +53,8 @@ void fcopy(FILE *fdst, long d, FILE *fsrc, long s, long offset);
 char *fname(FILE *file);
 
 int fupdate(FILE *file, long offset, void *buffer, int newlen, int oldlen);
+
+void init_struct();
 
 struct option long_options[] = {
         {"address",  required_argument, NULL, 'a'},
@@ -73,13 +77,10 @@ int main(int argc, char *argv[]) {
     int optc;
     struct winsize wbuf;
 
-    user_obj.user = "root";
-    user_obj.port = 22;
-    user_obj.type = STORE_ACCESS;
-
     char *tmp;
     int optionindex = -1;
 
+    init_struct();
     if (argc <= 1) {
         usage(1);
     } else {
@@ -88,7 +89,7 @@ int main(int argc, char *argv[]) {
             printf("optarg = %s\t\t", optarg);
             printf("optind = %d\t\t", optind);
             printf("argv[optind] = %s\n", argv[optind]);
-            char *port_p;
+            char *port_str;
             char *id_str;
             switch (optc) {
                 case 0:
@@ -111,10 +112,10 @@ int main(int argc, char *argv[]) {
                     strcpy(user_obj.name, opt_str(optarg, argv[optind]));
                     break;
                 case 'p':
-                    port_p = opt_str(optarg, argv[optind]);
+                    port_str = opt_str(optarg, argv[optind]);
                     long port = 22;
-                    if (port_p != NULL) {
-                        port = strtol(port_p, &tmp, 10);
+                    if (port_str != NULL) {
+                        port = strtol(port_str, &tmp, 10);
                     }
                     if (port > 65535) {
                         fprintf(stderr, "Error: port is too big\n");
@@ -130,6 +131,7 @@ int main(int argc, char *argv[]) {
                     break;
                 case 'u':
                     strcpy(user_obj.user, opt_str(optarg, argv[optind]));
+                    break;
                 case 'h':
                     usage(0);
                     return 0;
@@ -168,13 +170,12 @@ int main(int argc, char *argv[]) {
             return 0;
         } else if (user_obj.type == USE_ID) {
             read_index();
-        } else if (user_obj.type == STORE_ACCESS) {
+        } else if (user_obj.type == ACCESS_SAVE) {
             if (!user_obj.name) {
                 user_obj.name = user_obj.host;
             }
-            store_access();
+            save_access();
         }
-
 
         if ((newpid = fork()) == -1) {
             perror("fork");
@@ -183,7 +184,6 @@ int main(int argc, char *argv[]) {
         } else if (newpid < 0) {
             perror("fail ");
         }
-
 
         slave_pt_fd = open(pt_name, O_RDWR | O_NOCTTY);
 
@@ -206,7 +206,7 @@ int main(int argc, char *argv[]) {
                 FD_SET(master_pt_fd, &readfd);
                 printf("try to pselect\n");
 
-                int selret = pselect(master_pt_fd + 1, &readfd, NULL, NULL, NULL, &sigmask_select);
+                int selret = pselect(master_pt_fd + 100, &readfd, NULL, NULL, NULL, &sigmask_select);
                 printf("pselect %d\n", selret);
                 if (selret > 0) {
                     if (FD_ISSET(master_pt_fd, &readfd)) {
@@ -233,9 +233,8 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-
 void child() {
-    setsid();
+//    setsid();
     int sla_fd;
     char *arglist[1024];
     int numargs = 0;
@@ -312,9 +311,9 @@ void usage(int status) {
 }
 
 void list_rec() {
-    FILE *file = fopen("ssh", "r+");
+    FILE *file = fopen(FILE_PATH, "r+");
     if (file == NULL) {
-        fprintf(stderr, "read ssh.txt fail");
+        fprintf(stderr, "read %s fail", FILE_PATH);
     }
     char line[1024];
 
@@ -338,9 +337,10 @@ void read_index() {
         fprintf(stderr, "Error: Unknown id\n");
     }
 
-    FILE *file = fopen("ssh.txt", "r+");
+    FILE *file = fopen(FILE_PATH, "r+");
     if (file == NULL) {
-        fprintf(stderr, "read ssh.txt fail");
+        fprintf(stderr, "read %s fail", FILE_PATH);
+        return;
     }
 
     int r_id = 1;
@@ -372,10 +372,11 @@ void read_index() {
     fclose(file);
 }
 
-void store_access() {
-    FILE *file = fopen("ssh.txt", "r+");
+void save_access() {
+    FILE *file = fopen(FILE_PATH, "r+");
     if (file == NULL) {
-        fprintf(stderr, "read ssh.txt fail");
+        fprintf(stderr, "read %s fail", FILE_PATH);
+        return;
     }
 
     char *r_name = NULL;
@@ -545,6 +546,15 @@ long fsize(FILE *file) {
     return ftell(file);
 }
 
+void init_struct() {
+    user_obj.user = calloc(1024, 1);
+    user_obj.host = calloc(1024, 1);
+    user_obj.password = calloc(1024, 1);
+    user_obj.name = calloc(1024, 1);
+    user_obj.user = "root";
+    user_obj.port = 22;
+    user_obj.type = ACCESS_SAVE;
+}
 
 void sigchild_handler(int signum) {
 
@@ -556,4 +566,5 @@ void winch_handler(int signum) {
         ioctl(master_pt_fd, TIOCGWINSZ, &wsize);
     }
 }
+
 
