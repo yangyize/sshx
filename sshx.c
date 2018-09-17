@@ -373,7 +373,7 @@ void read_index() {
 }
 
 void save_access() {
-    FILE *file = fopen(FILE_PATH, "r+");
+    FILE *file = fopen(FILE_PATH, "r+w");
     if (file == NULL) {
         fprintf(stderr, "read %s fail", FILE_PATH);
         return;
@@ -392,7 +392,7 @@ void save_access() {
                           r_host,
                           &r_port,
                           r_password);
-        if (scaf < 0) {
+        if (scaf == EOF) {
             return;
         }
         int bufsize = sizeof(r_name) + sizeof(r_user) + sizeof(r_host) + sizeof(r_password) + 9;
@@ -566,5 +566,3 @@ void winch_handler(int signum) {
         ioctl(master_pt_fd, TIOCGWINSZ, &wsize);
     }
 }
-
-
