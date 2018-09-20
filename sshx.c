@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
-#define FILE_PATH "/code/ssh.txt"
+#define FILE_PATH "./ssh.txt"
 
 enum use_code {
     LIST_REC,
