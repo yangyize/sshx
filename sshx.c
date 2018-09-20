@@ -108,6 +108,9 @@ int main(int argc, char *argv[]) {
                         user_obj.type = USE_ID;
                     }
                     break;
+                case 'I':
+                    user_obj.type = IGNORE_SAVE;
+                    break;
                 case 'n':
                     strcpy(user_obj.name, opt_str(optarg, argv[optind]));
                     break;
@@ -142,21 +145,29 @@ int main(int argc, char *argv[]) {
 
         signal(SIGCHLD, sigchild_handler);
 
-        master_pt_fd = open("/dev/ptmx", O_RDWR); // like posix_openpt
+        master_pt_fd = open("/dev/ptmx", O_RDWR | O_NONBLOCK); // like posix_openpt
         if (master_pt_fd == -1) {
             perror("Could not get a terminal");
             exit(2);
         }
 
-        fcntl(master_pt_fd, F_SETFL, O_NONBLOCK);
+        if (grantpt(master_pt_fd) != 0) {
+            perror("Could not grant access to the slave");
+            exit(1);
+        }
 
-        tty_fd = open("/dev/tty", O_RDWR);
+        if (unlockpt(master_pt_fd) != 0) {
+            perror("Could not unclock");
+            exit(1);
+        }
+
+        tty_fd = open("/dev/tty", O_RDWR | O_NONBLOCK);
         if (tty_fd == -1) {
             perror("Could not open tty");
             exit(2);
         }
 
-        if (ioctl(tty_fd, TIOCGWINSZ, &wbuf) != -1) {
+        if (ioctl(tty_fd, TIOCGWINSZ, &wbuf) != -1) { // 获取winsize, 传给tty
             signal(SIGWINCH, winch_handler);
             ioctl(master_pt_fd, TIOCGWINSZ, &wbuf);
         }
@@ -206,7 +217,7 @@ int main(int argc, char *argv[]) {
                 FD_SET(master_pt_fd, &readfd);
                 printf("try to pselect\n");
 
-                int selret = pselect(master_pt_fd + 100, &readfd, NULL, NULL, NULL, &sigmask_select);
+                int selret = pselect(master_pt_fd + 1, &readfd, NULL, NULL, NULL, &sigmask_select);
                 printf("pselect %d\n", selret);
                 if (selret > 0) {
                     if (FD_ISSET(master_pt_fd, &readfd)) {
@@ -234,7 +245,7 @@ int main(int argc, char *argv[]) {
 }
 
 void child() {
-//    setsid();
+    //setsid();
     int sla_fd;
     char *arglist[1024];
     int numargs = 0;
@@ -249,6 +260,8 @@ void child() {
 
     strcpy(temp1, user_obj.user);
     strcat(temp1, "@");
+
+
     strcat(temp1, user_obj.host);
     arglist[numargs++] = makestr(temp1);
 
@@ -259,10 +272,10 @@ void child() {
     strcat(temp1, "-p");
     strcat(temp1, temp2);
     arglist[numargs++] = makestr(temp1);
-
-    for (int i = 0; i < numargs; i++) {
-        printf("%s\n", arglist[i]);
-    }
+    arglist[numargs++] = NULL;
+//    for (int i = 0; i < numargs; i++) {
+//        printf("%s\n", arglist[i]);
+//    }
 
     execvp(arglist[0], arglist);
 
