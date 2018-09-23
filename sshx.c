@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <signal.h>
 
 #define FILE_PATH "./ssh.txt"
 
